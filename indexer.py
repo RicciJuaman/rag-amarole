@@ -10,10 +10,10 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
-import psycopg2
-import faiss
-import torch
-from sentence_transformers import SentenceTransformer
+import psycopg2 # pyright: ignore[reportMissingModuleSource]
+import faiss # pyright: ignore[reportMissingImports]
+import torch # pyright: ignore[reportMissingImports]
+from sentence_transformers import SentenceTransformer # pyright: ignore[reportMissingImports]
 
 from config import ModelConfig, DatabaseConfig, IndexConfig
 

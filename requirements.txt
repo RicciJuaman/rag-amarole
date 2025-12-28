@@ -15,6 +15,11 @@ psycopg2==2.9.11
 # Configuration
 python-dotenv==1.2.1
 
+# API
+fastapi==0.115.0
+uvicorn[standard]==0.34.0
+pydantic==2.12.5
+
 # Utilities
 tqdm==4.67.1
 
@@ -22,3 +27,4 @@ tqdm==4.67.1
 pytest==7.4.3
 black==23.12.1
 mypy==1.8.0
+httpx==0.28.1  # For testing API
