@@ -49,7 +49,7 @@ def check_cuda():
     logger.info("\nChecking CUDA...")
     
     try:
-        import torch
+        import torch # pyright: ignore[reportMissingImports]
         
         if torch.cuda.is_available():
             device_name = torch.cuda.get_device_name(0)
@@ -71,7 +71,7 @@ def check_database():
     
     try:
         from config import DatabaseConfig
-        import psycopg2
+        import psycopg2 # pyright: ignore[reportMissingModuleSource]
         
         db_config = DatabaseConfig.from_env()
         
@@ -132,8 +132,8 @@ def check_model():
     
     try:
         from config import ModelConfig
-        from sentence_transformers import SentenceTransformer
-        import torch
+        from sentence_transformers import SentenceTransformer # pyright: ignore[reportMissingImports]
+        import torch # pyright: ignore[reportMissingImports]
         
         model_config = ModelConfig()
         logger.info(f"  Loading {model_config.name}...")
@@ -211,7 +211,7 @@ def check_existing_index():
             
             # Try to load and show info
             try:
-                import faiss
+                import faiss # pyright: ignore[reportMissingImports]
                 import pickle
                 
                 index = faiss.read_index(str(index_path))
