@@ -2,11 +2,11 @@ import os
 import time
 import pickle
 import numpy as np
-import psycopg2
-import faiss
-import torch
+import psycopg2 # pyright: ignore[reportMissingModuleSource]
+import faiss # pyright: ignore[reportMissingImports]
+import torch # pyright: ignore[reportMissingImports]
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer # type: ignore
 
 # -------------------------------------------------
 # ENV + CONFIG
@@ -14,7 +14,7 @@ from sentence_transformers import SentenceTransformer
 load_dotenv()
 MODEL_NAME = "all-mpnet-base-v2"
 
-DB_BATCH_SIZE = 50          # rows fetched from DB per query
+DB_BATCH_SIZE = 1000          # rows fetched from DB per query
 EMBED_BATCH_SIZE = 250      # GPU batch size
 EMBED_DIM = 768             # all-mpnet-base-v2 embedding dimension
 
