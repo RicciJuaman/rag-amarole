@@ -12,21 +12,22 @@ from sentence_transformers import SentenceTransformer
 # ENV + CONFIG
 # -------------------------------------------------
 load_dotenv()
+MODEL_NAME = "all-mpnet-base-v2"
 
 DB_BATCH_SIZE = 50          # rows fetched from DB per query
 EMBED_BATCH_SIZE = 250      # GPU batch size
-EMBED_DIM = 896             # KaLM v2.5 dimension
+EMBED_DIM = 768             # all-mpnet-base-v2 embedding dimension
 
 INDEX_DIR = "indexes"
-INDEX_PATH = os.path.join(INDEX_DIR, "kalm_flat_ip.index")
-META_PATH = os.path.join(INDEX_DIR, "doc_ids.pkl")
+INDEX_PATH = f"indexes/{MODEL_NAME}_flat_ip.index"
+META_PATH  = f"indexes/{MODEL_NAME}_doc_ids.pkl"
 
 os.makedirs(INDEX_DIR, exist_ok=True)
 
 # -------------------------------------------------
 # LOAD MODEL (GPU)
 # -------------------------------------------------
-print("Loading KaLM embedding model on GPU...")
+print(f"Loading {MODEL_NAME} on GPU...")
 
 model = SentenceTransformer(
     "sentence-transformers/all-mpnet-base-v2",
