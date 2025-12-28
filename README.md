@@ -1,4 +1,4 @@
-# RAG System for Reviews
+# RAG System for Amazon Reviews
 
 A production-ready Retrieval-Augmented Generation (RAG) system for semantic search over product reviews.
 
@@ -86,7 +86,21 @@ If the process is interrupted, simply run the command again. It will automatical
 
 ### 2. Search the Index
 
-Use the retriever to search for similar documents:
+#### Option A: CLI Search
+
+Use the command-line search tool:
+
+```bash
+# Interactive mode
+python search.py
+
+# Single query
+python search.py "What are customers saying about quality?"
+```
+
+#### Option B: Python API
+
+Use the retriever directly in your code:
 
 ```python
 from retriever import FAISSRetriever
@@ -107,10 +121,38 @@ for result in results:
     print(f"Doc ID: {result.doc_id}, Score: {result.score:.4f}")
 ```
 
-**Run demo**:
+#### Option C: REST API (NEW!)
+
+Start the FastAPI server:
+
 ```bash
-python retriever.py
+# Development mode
+uvicorn api:app --reload
+
+# Or with make
+make api-dev
 ```
+
+Then search using HTTP:
+
+```bash
+# Using curl
+curl -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "product quality", "top_k": 5}'
+
+# Using Python client
+python api_client.py
+```
+
+**API Features**:
+- ✅ **Full metadata** - Returns Summary and Text for each result
+- ✅ **RESTful** - Standard HTTP endpoints
+- ✅ **Interactive docs** - Auto-generated at `/docs`
+- ✅ **Fast** - Async request handling
+- ✅ **Production-ready** - CORS, error handling, logging
+
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API reference.
 
 ### 3. Batch Search
 
@@ -138,6 +180,11 @@ rag-amarole/
 ├── config.py              # Configuration management
 ├── indexer.py             # Embedding and FAISS indexing
 ├── retriever.py           # Search and retrieval
+├── api.py                 # FastAPI REST API (NEW!)
+├── api_client.py          # API client example (NEW!)
+├── search.py              # CLI search tool
+├── validate.py            # System validation
+├── example.py             # Usage examples
 ├── requirements.txt       # Python dependencies
 ├── .env                   # Environment variables (create this)
 ├── indexes/               # Generated FAISS indexes and metadata
