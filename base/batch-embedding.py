@@ -1,8 +1,8 @@
-import psycopg2
+import psycopg2 # pyright: ignore[reportMissingModuleSource]
 from dotenv import load_dotenv
 import os
-from sentence_transformers import SentenceTransformer
-import torch
+from sentence_transformers import SentenceTransformer # pyright: ignore[reportMissingImports]
+import torch # pyright: ignore[reportMissingImports]
 import time
 
 load_dotenv()

@@ -1,5 +1,5 @@
-from sentence_transformers import SentenceTransformer
-import torch
+from sentence_transformers import SentenceTransformer # pyright: ignore[reportMissingImports]
+import torch # pyright: ignore[reportMissingImports]
 
 model = SentenceTransformer(
     "KaLM-Embedding/KaLM-embedding-multilingual-mini-instruct-v2.5",
