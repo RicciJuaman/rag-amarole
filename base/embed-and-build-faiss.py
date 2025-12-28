@@ -29,7 +29,7 @@ os.makedirs(INDEX_DIR, exist_ok=True)
 print("Loading KaLM embedding model on GPU...")
 
 model = SentenceTransformer(
-    "KaLM-Embedding/KaLM-embedding-multilingual-mini-instruct-v2.5",
+    "sentence-transformers/all-mpnet-base-v2",
     trust_remote_code=True,
     device="cuda",
     model_kwargs={"dtype": torch.float16},
