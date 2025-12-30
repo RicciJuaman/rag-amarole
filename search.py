@@ -91,7 +91,7 @@ def search_interactive():
 
 def search_single(
     query: str,
-    top_k: int = 5,
+    top_k: int = 10,
     min_score: Optional[float] = None,
     verbose: bool = False
 ):

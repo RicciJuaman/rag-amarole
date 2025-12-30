@@ -89,5 +89,5 @@ class RetrievalConfig:
     """Configuration for retrieval/search."""
     top_k: int = 10
     min_similarity: float = 0.0  # Minimum cosine similarity threshold
-    use_bm25: bool = False  # Whether to use hybrid retrieval
+    use_bm25: bool = True  # Whether to use hybrid retrieval
     bm25_weight: float = 0.3  # Weight for BM25 in hybrid mode (0-1)
