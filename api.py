@@ -12,10 +12,10 @@ import logging
 from typing import List, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Query # pyright: ignore[reportMissingImports]
+from fastapi.middleware.cors import CORSMiddleware # pyright: ignore[reportMissingImports]
 from pydantic import BaseModel, Field
-import uvicorn
+import uvicorn # pyright: ignore[reportMissingImports]
 
 from config import ModelConfig, IndexConfig, RetrievalConfig, DatabaseConfig
 from retriever import FAISSRetriever
@@ -89,6 +89,7 @@ class SearchRequest(BaseModel):
     query: str = Field(..., description="Search query text", min_length=1)
     top_k: Optional[int] = Field(10, description="Number of results to return", ge=1, le=100)
     min_score: Optional[float] = Field(None, description="Minimum similarity score (0-1)", ge=0, le=1)
+    use_bm25: Optional[bool] = Field(None, description="Enable BM25 hybrid search (overrides config)")
 
 
 class DocumentMetadata(BaseModel):
@@ -120,6 +121,8 @@ class StatsResponse(BaseModel):
     index_type: str
     embedding_model: str
     embedding_dimension: int
+    bm25_available: bool
+    bm25_enabled: bool
 
 
 # Helper function to fetch metadata
@@ -199,7 +202,9 @@ async def get_stats():
         total_documents=len(retriever.doc_ids),
         index_type="FAISS IndexFlatIP",
         embedding_model=retriever.model_config.name,
-        embedding_dimension=retriever.embedding_model.embedding_dim
+        embedding_dimension=retriever.embedding_model.embedding_dim,
+        bm25_available=retriever.doc_texts is not None,
+        bm25_enabled=retriever.retrieval_config.use_bm25
     )
 
 
@@ -209,6 +214,7 @@ async def search(request: SearchRequest):
     Search for similar documents.
     
     Returns documents with full metadata (summary and text).
+    Can optionally enable BM25 hybrid search.
     """
     if retriever is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
@@ -218,9 +224,9 @@ async def search(request: SearchRequest):
         if request.min_score is not None:
             retriever.retrieval_config.min_similarity = request.min_score
         
-        # Perform search
-        logger.info(f"Search query: '{request.query}' (top_k={request.top_k})")
-        results = retriever.search(request.query, top_k=request.top_k)
+        # Perform search (with optional BM25)
+        logger.info(f"Search query: '{request.query}' (top_k={request.top_k}, use_bm25={request.use_bm25})")
+        results = retriever.search(request.query, top_k=request.top_k, use_bm25=request.use_bm25)
         
         if not results:
             return SearchResponse(
@@ -265,14 +271,15 @@ async def search(request: SearchRequest):
 async def search_get(
     q: str = Query(..., description="Search query", min_length=1),
     top_k: int = Query(10, description="Number of results", ge=1, le=100),
-    min_score: Optional[float] = Query(None, description="Minimum score", ge=0, le=1)
+    min_score: Optional[float] = Query(None, description="Minimum score", ge=0, le=1),
+    use_bm25: Optional[bool] = Query(None, description="Enable BM25 hybrid search")
 ):
     """
     Search endpoint using GET method (alternative to POST).
     
-    Usage: /search?q=your+query&top_k=5&min_score=0.5
+    Usage: /search?q=your+query&top_k=5&min_score=0.5&use_bm25=true
     """
-    request = SearchRequest(query=q, top_k=top_k, min_score=min_score)
+    request = SearchRequest(query=q, top_k=top_k, min_score=min_score, use_bm25=use_bm25)
     return await search(request)
 
 
