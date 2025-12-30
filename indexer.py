@@ -10,8 +10,8 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
-import psycopg2
-import faiss
+import psycopg2 # pyright: ignore[reportMissingModuleSource]
+import faiss # pyright: ignore[reportMissingImports]
 import torch
 from sentence_transformers import SentenceTransformer
 

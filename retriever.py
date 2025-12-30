@@ -9,8 +9,8 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
-import faiss # pyright: ignore[reportMissingImports]
-from rank_bm25 import BM25Okapi # pyright: ignore[reportMissingImports]
+import faiss  # pyright: ignore[reportMissingImports]
+from rank_bm25 import BM25Okapi  # pyright: ignore[reportMissingImports]
 
 from config import ModelConfig, IndexConfig, RetrievalConfig
 from indexer import EmbeddingModel
@@ -50,9 +50,28 @@ class FAISSRetriever:
         self.embedding_model = EmbeddingModel(model_config)
         
         # Load index and metadata
-        self.index, self.doc_ids = self._load_index()
+        self.index, self.doc_ids, self.doc_texts = self._load_index()
         
-        logger.info(f"Retriever ready with {len(self.doc_ids)} documents")
+        # Initialize BM25 if enabled and texts available
+        self.bm25 = None
+        if self.retrieval_config.use_bm25 and self.doc_texts:
+            logger.info("Initializing BM25 index...")
+            self._initialize_bm25()
+        
+        logger.info(f"Retriever ready with {len(self.doc_ids):,} documents")
+        if self.bm25:
+            logger.info("BM25 hybrid retrieval enabled")
+    
+    def _initialize_bm25(self) -> None:
+        """Initialize BM25 index from document texts."""
+        try:
+            # Tokenize documents for BM25
+            tokenized_docs = [doc.lower().split() for doc in self.doc_texts]
+            self.bm25 = BM25Okapi(tokenized_docs)
+            logger.info("BM25 index initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize BM25: {e}")
+            self.bm25 = None
     
     def _load_index(self) -> Tuple[faiss.Index, List[int], Optional[List[str]]]:
         """Load FAISS index, document IDs, and optionally document texts."""

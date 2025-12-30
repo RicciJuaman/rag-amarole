@@ -1,342 +1,386 @@
 """
-FastAPI server for RAG system with document metadata retrieval.
+Example client for the RAG Search API.
 
 Usage:
-    uvicorn api:app --reload
-    
-Or:
-    python api.py
+    python api_client.py
 """
 
-import logging
+import requests
 from typing import List, Optional
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, HTTPException, Query # pyright: ignore[reportMissingImports]
-from fastapi.middleware.cors import CORSMiddleware # pyright: ignore[reportMissingImports]
-from pydantic import BaseModel, Field
-import uvicorn # pyright: ignore[reportMissingImports]
-
-from config import ModelConfig, IndexConfig, RetrievalConfig, DatabaseConfig
-from retriever import FAISSRetriever
-from indexer import DatabaseReader
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Global state
-retriever = None
-db_reader = None
+import json
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Startup and shutdown events."""
-    global retriever, db_reader
+class RAGClient:
+    """Client for interacting with the RAG Search API."""
     
-    # Startup
-    logger.info("Initializing RAG system...")
-    try:
-        retriever = FAISSRetriever(
-            model_config=ModelConfig(),
-            index_config=IndexConfig(),
-            retrieval_config=RetrievalConfig()
-        )
-        logger.info(f"✓ Index loaded: {len(retriever.doc_ids):,} documents")
+    def __init__(self, base_url: str = "http://localhost:8000"):
+        self.base_url = base_url.rstrip("/")
+    
+    def health_check(self) -> dict:
+        """Check if the API is healthy."""
+        response = requests.get(f"{self.base_url}/health")
+        response.raise_for_status()
+        return response.json()
+    
+    def get_stats(self) -> dict:
+        """Get system statistics."""
+        response = requests.get(f"{self.base_url}/stats")
+        response.raise_for_status()
+        return response.json()
+    
+    def search(
+        self, 
+        query: str, 
+        top_k: int = 10, 
+        min_score: Optional[float] = None,
+        use_bm25: Optional[bool] = None
+    ) -> dict:
+        """
+        Search for similar documents.
         
-        # Initialize database reader for metadata
-        db_reader = DatabaseReader(DatabaseConfig.from_env())
-        db_reader.connect()
-        logger.info("✓ Database connected")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize: {e}")
-        raise
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down...")
-    if db_reader:
-        db_reader.close()
-
-
-# Create FastAPI app
-app = FastAPI(
-    title="RAG Search API",
-    description="Semantic search API for product reviews with metadata",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# Pydantic models for API
-class SearchRequest(BaseModel):
-    """Request model for search endpoint."""
-    query: str = Field(..., description="Search query text", min_length=1)
-    top_k: Optional[int] = Field(10, description="Number of results to return", ge=1, le=100)
-    min_score: Optional[float] = Field(None, description="Minimum similarity score (0-1)", ge=0, le=1)
-    use_bm25: Optional[bool] = Field(None, description="Enable BM25 hybrid search (overrides config)")
-
-
-class DocumentMetadata(BaseModel):
-    """Document metadata including summary and text."""
-    doc_id: int = Field(..., description="Document ID")
-    summary: str = Field(..., description="Document summary")
-    text: str = Field(..., description="Full document text")
-    score: float = Field(..., description="Similarity score")
-    rank: int = Field(..., description="Result rank")
-
-
-class SearchResponse(BaseModel):
-    """Response model for search endpoint."""
-    query: str = Field(..., description="Original search query")
-    total_results: int = Field(..., description="Number of results returned")
-    results: List[DocumentMetadata] = Field(..., description="Search results with metadata")
-
-
-class HealthResponse(BaseModel):
-    """Response model for health check."""
-    status: str
-    index_size: int
-    message: str
-
-
-class StatsResponse(BaseModel):
-    """Response model for statistics."""
-    total_documents: int
-    index_type: str
-    embedding_model: str
-    embedding_dimension: int
-    bm25_available: bool
-    bm25_enabled: bool
-
-
-# Helper function to fetch metadata
-def fetch_document_metadata(doc_ids: List[int]) -> dict:
-    """
-    Fetch summary and text for given document IDs.
-    
-    Args:
-        doc_ids: List of document IDs
-        
-    Returns:
-        Dictionary mapping doc_id to (summary, text)
-    """
-    if not doc_ids:
-        return {}
-    
-    # Build query with parameterized IN clause
-    placeholders = ','.join(['%s'] * len(doc_ids))
-    query = f"""
-        SELECT "Id", 
-               COALESCE("Summary", '') AS summary,
-               COALESCE("Text", '') AS text
-        FROM reviews
-        WHERE "Id" IN ({placeholders})
-    """
-    
-    try:
-        with db_reader.conn.cursor() as cur:
-            cur.execute(query, doc_ids)
-            rows = cur.fetchall()
-        
-        # Create dictionary mapping doc_id -> (summary, text)
-        return {row[0]: (row[1], row[2]) for row in rows}
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch metadata: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch document metadata")
-
-
-# API Endpoints
-
-@app.get("/", response_model=dict)
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": "RAG Search API",
-        "version": "1.0.0",
-        "endpoints": {
-            "search": "/search",
-            "health": "/health",
-            "stats": "/stats",
-            "docs": "/docs"
+        Args:
+            query: Search query text
+            top_k: Number of results to return
+            min_score: Minimum similarity score (0-1)
+            use_bm25: Enable BM25 hybrid search (overrides config)
+            
+        Returns:
+            Dictionary with search results including metadata
+        """
+        payload = {
+            "query": query,
+            "top_k": top_k
         }
-    }
-
-
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint."""
-    if retriever is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    
-    return HealthResponse(
-        status="healthy",
-        index_size=len(retriever.doc_ids),
-        message="RAG system is operational"
-    )
-
-
-@app.get("/stats", response_model=StatsResponse)
-async def get_stats():
-    """Get system statistics."""
-    if retriever is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    
-    return StatsResponse(
-        total_documents=len(retriever.doc_ids),
-        index_type="FAISS IndexFlatIP",
-        embedding_model=retriever.model_config.name,
-        embedding_dimension=retriever.embedding_model.embedding_dim,
-        bm25_available=retriever.doc_texts is not None,
-        bm25_enabled=retriever.retrieval_config.use_bm25
-    )
-
-
-@app.post("/search", response_model=SearchResponse)
-async def search(request: SearchRequest):
-    """
-    Search for similar documents.
-    
-    Returns documents with full metadata (summary and text).
-    Can optionally enable BM25 hybrid search.
-    """
-    if retriever is None:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    
-    try:
-        # Update retrieval config if needed
-        if request.min_score is not None:
-            retriever.retrieval_config.min_similarity = request.min_score
+        if min_score is not None:
+            payload["min_score"] = min_score
+        if use_bm25 is not None:
+            payload["use_bm25"] = use_bm25
         
-        # Perform search (with optional BM25)
-        logger.info(f"Search query: '{request.query}' (top_k={request.top_k}, use_bm25={request.use_bm25})")
-        results = retriever.search(request.query, top_k=request.top_k, use_bm25=request.use_bm25)
-        
-        if not results:
-            return SearchResponse(
-                query=request.query,
-                total_results=0,
-                results=[]
-            )
-        
-        # Fetch metadata for all results
-        doc_ids = [r.doc_id for r in results]
-        metadata_map = fetch_document_metadata(doc_ids)
-        
-        # Build response with metadata
-        results_with_metadata = []
-        for result in results:
-            if result.doc_id in metadata_map:
-                summary, text = metadata_map[result.doc_id]
-                results_with_metadata.append(DocumentMetadata(
-                    doc_id=result.doc_id,
-                    summary=summary,
-                    text=text,
-                    score=result.score,
-                    rank=result.rank
-                ))
-            else:
-                logger.warning(f"Metadata not found for doc_id: {result.doc_id}")
-        
-        logger.info(f"Returning {len(results_with_metadata)} results")
-        
-        return SearchResponse(
-            query=request.query,
-            total_results=len(results_with_metadata),
-            results=results_with_metadata
+        response = requests.post(
+            f"{self.base_url}/search",
+            json=payload
         )
-        
-    except Exception as e:
-        logger.error(f"Search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/search", response_model=SearchResponse)
-async def search_get(
-    q: str = Query(..., description="Search query", min_length=1),
-    top_k: int = Query(10, description="Number of results", ge=1, le=100),
-    min_score: Optional[float] = Query(None, description="Minimum score", ge=0, le=1),
-    use_bm25: Optional[bool] = Query(None, description="Enable BM25 hybrid search")
-):
-    """
-    Search endpoint using GET method (alternative to POST).
+        response.raise_for_status()
+        return response.json()
     
-    Usage: /search?q=your+query&top_k=5&min_score=0.5&use_bm25=true
-    """
-    request = SearchRequest(query=q, top_k=top_k, min_score=min_score, use_bm25=use_bm25)
-    return await search(request)
-
-
-@app.get("/document/{doc_id}", response_model=DocumentMetadata)
-async def get_document(doc_id: int):
-    """
-    Get a specific document by ID.
-    
-    Returns the document metadata without similarity score.
-    """
-    if db_reader is None:
-        raise HTTPException(status_code=503, detail="Database not available")
-    
-    try:
-        metadata_map = fetch_document_metadata([doc_id])
+    def search_get(
+        self, 
+        query: str, 
+        top_k: int = 10, 
+        min_score: Optional[float] = None,
+        use_bm25: Optional[bool] = None
+    ) -> dict:
+        """
+        Search using GET method (alternative).
         
-        if doc_id not in metadata_map:
-            raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+        Args:
+            query: Search query text
+            top_k: Number of results to return
+            min_score: Minimum similarity score (0-1)
+            use_bm25: Enable BM25 hybrid search
+            
+        Returns:
+            Dictionary with search results including metadata
+        """
+        params = {
+            "q": query,
+            "top_k": top_k
+        }
+        if min_score is not None:
+            params["min_score"] = min_score
+        if use_bm25 is not None:
+            params["use_bm25"] = use_bm25
         
-        summary, text = metadata_map[doc_id]
-        
-        return DocumentMetadata(
-            doc_id=doc_id,
-            summary=summary,
-            text=text,
-            score=1.0,  # Not applicable for direct fetch
-            rank=1
+        response = requests.get(
+            f"{self.base_url}/search",
+            params=params
         )
+        response.raise_for_status()
+        return response.json()
+    
+    def get_document(self, doc_id: int) -> dict:
+        """
+        Get a specific document by ID.
         
-    except HTTPException:
-        raise
+        Args:
+            doc_id: Document ID
+            
+        Returns:
+            Dictionary with document metadata
+        """
+        response = requests.get(f"{self.base_url}/document/{doc_id}")
+        response.raise_for_status()
+        return response.json()
+
+
+def print_results(results: dict, show_full_text: bool = False):
+    """Pretty print search results."""
+    print(f"\n{'='*80}")
+    print(f"Query: {results['query']}")
+    print(f"Total Results: {results['total_results']}")
+    print(f"{'='*80}\n")
+    
+    for result in results['results']:
+        print(f"Rank {result['rank']}: Doc ID {result['doc_id']} (Score: {result['score']:.4f})")
+        print(f"Summary: {result['summary'][:150]}..." if len(result['summary']) > 150 else f"Summary: {result['summary']}")
+        
+        if show_full_text:
+            print(f"\nFull Text:\n{result['text']}\n")
+        else:
+            print(f"Text Preview: {result['text'][:200]}..." if len(result['text']) > 200 else f"Text: {result['text']}")
+        
+        print("-" * 80)
+
+
+def example_1_basic_search():
+    """Example 1: Basic search."""
+    print("\n" + "="*80)
+    print("EXAMPLE 1: Basic Search")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    # Check health
+    health = client.health_check()
+    print(f"✓ API Status: {health['status']}")
+    print(f"✓ Index Size: {health['index_size']:,} documents\n")
+    
+    # Perform search
+    query = "What do customers say about product quality?"
+    results = client.search(query, top_k=3)
+    
+    print_results(results)
+
+
+def example_2_filtered_search():
+    """Example 2: Search with score filter."""
+    print("\n" + "="*80)
+    print("EXAMPLE 2: Filtered Search (min_score=0.5)")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    query = "shipping and delivery issues"
+    results = client.search(query, top_k=5, min_score=0.5)
+    
+    print_results(results)
+
+
+def example_3_get_document():
+    """Example 3: Get specific document."""
+    print("\n" + "="*80)
+    print("EXAMPLE 3: Get Specific Document")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    # First, search to get a doc_id
+    results = client.search("great product", top_k=1)
+    
+    if results['results']:
+        doc_id = results['results'][0]['doc_id']
+        print(f"\nFetching document {doc_id}...\n")
+        
+        # Get the full document
+        doc = client.get_document(doc_id)
+        
+        print(f"Document ID: {doc['doc_id']}")
+        print(f"Summary: {doc['summary']}")
+        print(f"\nFull Text:\n{doc['text']}")
+
+
+def example_4_batch_queries():
+    """Example 4: Multiple queries."""
+    print("\n" + "="*80)
+    print("EXAMPLE 4: Batch Queries")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    queries = [
+        "product quality",
+        "customer service",
+        "value for money",
+        "shipping speed"
+    ]
+    
+    for query in queries:
+        print(f"\n--- Query: '{query}' ---")
+        results = client.search(query, top_k=2)
+        
+        for result in results['results']:
+            print(f"  {result['rank']}. Doc {result['doc_id']} (Score: {result['score']:.4f})")
+            print(f"     Summary: {result['summary'][:80]}...")
+
+
+def example_5_stats():
+    """Example 5: Get system statistics."""
+    print("\n" + "="*80)
+    print("EXAMPLE 5: System Statistics")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    stats = client.get_stats()
+    
+    print(f"\nSystem Statistics:")
+    print(f"  Total Documents: {stats['total_documents']:,}")
+    print(f"  Index Type: {stats['index_type']}")
+    print(f"  Embedding Model: {stats['embedding_model']}")
+    print(f"  Embedding Dimension: {stats['embedding_dimension']}")
+    print(f"  BM25 Available: {stats['bm25_available']}")
+    print(f"  BM25 Enabled (default): {stats['bm25_enabled']}")
+
+
+def example_6_bm25_toggle():
+    """Example 6: Toggle BM25 hybrid search."""
+    print("\n" + "="*80)
+    print("EXAMPLE 6: BM25 Hybrid Search Toggle")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    # Check if BM25 is available
+    stats = client.get_stats()
+    if not stats['bm25_available']:
+        print("\n⚠ BM25 not available - index needs to be rebuilt with document texts")
+        print("  Run: python indexer.py")
+        return
+    
+    query = "excellent quality and fast shipping"
+    
+    # Search without BM25
+    print(f"\n--- Semantic Only Search ---")
+    print(f"Query: {query}")
+    results_semantic = client.search(query, top_k=5, use_bm25=False)
+    
+    print(f"\nTop 3 Results (Semantic Only):")
+    for result in results_semantic['results'][:3]:
+        print(f"  {result['rank']}. Doc {result['doc_id']} - Score: {result['score']:.4f}")
+        print(f"     {result['summary'][:80]}...")
+    
+    # Search with BM25
+    print(f"\n--- Hybrid Search (Semantic + BM25) ---")
+    print(f"Query: {query}")
+    results_hybrid = client.search(query, top_k=5, use_bm25=True)
+    
+    print(f"\nTop 3 Results (Hybrid):")
+    for result in results_hybrid['results'][:3]:
+        print(f"  {result['rank']}. Doc {result['doc_id']} - Score: {result['score']:.4f}")
+        print(f"     {result['summary'][:80]}...")
+
+
+def example_7_error_handling():
+    """Example 7: Error handling."""
+    print("\n" + "="*80)
+    print("EXAMPLE 7: Error Handling")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    # Try to get non-existent document
+    try:
+        doc = client.get_document(999999999)
+        print(doc)
+    except requests.exceptions.HTTPError as e:
+        print(f"✓ Correctly caught error: {e.response.status_code} - {e.response.json()}")
+    
+    # Try invalid query
+    try:
+        results = client.search("", top_k=5)
+    except requests.exceptions.HTTPError as e:
+        print(f"✓ Correctly caught error: {e.response.status_code} - {e.response.json()}")
+
+
+def interactive_search():
+    """Interactive search mode."""
+    print("="*80)
+    print("RAG API - Interactive Search")
+    print("="*80)
+    
+    client = RAGClient()
+    
+    # Check connection
+    try:
+        health = client.health_check()
+        print(f"✓ Connected to API ({health['index_size']:,} documents)")
     except Exception as e:
-        logger.error(f"Failed to fetch document {doc_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Error handlers
-@app.exception_handler(404)
-async def not_found_handler(request, exc):
-    return {"error": "Endpoint not found", "path": str(request.url)}
-
-
-@app.exception_handler(500)
-async def internal_error_handler(request, exc):
-    logger.error(f"Internal error: {exc}")
-    return {"error": "Internal server error", "detail": str(exc)}
+        print(f"✗ Failed to connect: {e}")
+        print("\nMake sure the API is running:")
+        print("  uvicorn api:app --reload")
+        return
+    
+    print("\nCommands:")
+    print("  - Type your query and press Enter")
+    print("  - 'quit' or 'exit' to exit")
+    print("  - 'stats' for system statistics")
+    print()
+    
+    while True:
+        try:
+            query = input("Search> ").strip()
+            
+            if not query:
+                continue
+            
+            if query.lower() in ['quit', 'exit', 'q']:
+                print("Goodbye!")
+                break
+            
+            if query.lower() == 'stats':
+                stats = client.get_stats()
+                print(f"\n  Documents: {stats['total_documents']:,}")
+                print(f"  Model: {stats['embedding_model']}")
+                print(f"  BM25 Available: {stats['bm25_available']}")
+                print()
+                continue
+            
+            # Perform search
+            results = client.search(query, top_k=3)
+            
+            print(f"\n  Found {results['total_results']} results:")
+            for result in results['results']:
+                print(f"\n  Rank {result['rank']}: Doc {result['doc_id']} (Score: {result['score']:.4f})")
+                print(f"  Summary: {result['summary'][:100]}...")
+                print(f"  Text: {result['text'][:150]}...")
+            print()
+            
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except Exception as e:
+            print(f"  Error: {e}\n")
 
 
 def main():
-    """Run the server."""
-    uvicorn.run(
-        "api:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    """Run examples."""
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "interactive":
+        interactive_search()
+    else:
+        print("\n" + "="*80)
+        print("RAG API Client Examples")
+        print("="*80)
+        print("\nMake sure the API is running first:")
+        print("  uvicorn api:app --reload")
+        print("\nOr run in interactive mode:")
+        print("  python api_client.py interactive")
+        
+        # Run examples
+        try:
+            example_1_basic_search()
+            # example_2_filtered_search()
+            # example_3_get_document()
+            # example_4_batch_queries()
+            # example_5_stats()
+            # example_6_bm25_toggle()
+            # example_7_error_handling()
+        except requests.exceptions.ConnectionError:
+            print("\n✗ Could not connect to API. Make sure it's running:")
+            print("  uvicorn api:app --reload")
+        except Exception as e:
+            print(f"\n✗ Error: {e}")
 
 
 if __name__ == "__main__":
