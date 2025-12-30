@@ -9,8 +9,8 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
-import faiss
-from rank_bm25 import BM25Okapi
+import faiss # pyright: ignore[reportMissingImports]
+from rank_bm25 import BM25Okapi # pyright: ignore[reportMissingImports]
 
 from config import ModelConfig, IndexConfig, RetrievalConfig
 from indexer import EmbeddingModel
