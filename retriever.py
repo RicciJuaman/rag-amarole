@@ -1,6 +1,6 @@
 """
 Search and retrieval functionality for the RAG system.
-Supports semantic search using FAISS and optional BM25 hybrid retrieval.
+Supports semantic search using FAISS and hybrid retrieval with BM25.
 """
 
 import logging
@@ -9,8 +9,8 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
-import faiss # pyright: ignore[reportMissingImports]
-from rank_bm25 import BM25Okapi # pyright: ignore[reportMissingImports]
+import faiss
+from rank_bm25 import BM25Okapi
 
 from config import ModelConfig, IndexConfig, RetrievalConfig
 from indexer import EmbeddingModel
@@ -54,8 +54,8 @@ class FAISSRetriever:
         
         logger.info(f"Retriever ready with {len(self.doc_ids)} documents")
     
-    def _load_index(self) -> Tuple[faiss.Index, List[int]]:
-        """Load FAISS index and document ID mapping."""
+    def _load_index(self) -> Tuple[faiss.Index, List[int], Optional[List[str]]]:
+        """Load FAISS index, document IDs, and optionally document texts."""
         index_path = self.index_config.get_index_path(self.model_config.name)
         meta_path = self.index_config.get_metadata_path(self.model_config.name)
         
@@ -70,26 +70,41 @@ class FAISSRetriever:
             
             logger.info(f"Loading metadata from {meta_path}")
             with open(meta_path, "rb") as f:
-                doc_ids = pickle.load(f)
+                metadata = pickle.load(f)
+            
+            # Handle both old format (just doc_ids) and new format (dict with doc_ids and doc_texts)
+            if isinstance(metadata, dict):
+                doc_ids = metadata['doc_ids']
+                doc_texts = metadata.get('doc_texts', None)
+            else:
+                # Old format - just a list of doc_ids
+                doc_ids = metadata
+                doc_texts = None
+                logger.warning("Old metadata format detected (no texts for BM25)")
             
             if index.ntotal != len(doc_ids):
                 raise ValueError(
                     f"Index size mismatch: {index.ntotal} vectors but {len(doc_ids)} doc IDs"
                 )
             
-            return index, doc_ids
+            if doc_texts and len(doc_texts) != len(doc_ids):
+                logger.warning(f"Text count mismatch: {len(doc_texts)} texts but {len(doc_ids)} doc IDs")
+                doc_texts = None
+            
+            return index, doc_ids, doc_texts
             
         except Exception as e:
             logger.error(f"Failed to load index: {e}")
             raise
     
-    def search(self, query: str, top_k: Optional[int] = None) -> List[SearchResult]:
+    def search(self, query: str, top_k: Optional[int] = None, use_bm25: Optional[bool] = None) -> List[SearchResult]:
         """
-        Search for similar documents using semantic similarity.
+        Search for similar documents using semantic similarity and optionally BM25.
         
         Args:
             query: Search query string
             top_k: Number of results to return (defaults to config value)
+            use_bm25: Override config to enable/disable BM25 for this search
             
         Returns:
             List of SearchResult objects, sorted by score (highest first)
@@ -97,6 +112,18 @@ class FAISSRetriever:
         if top_k is None:
             top_k = self.retrieval_config.top_k
         
+        # Determine if we should use BM25 for this search
+        should_use_bm25 = use_bm25 if use_bm25 is not None else self.retrieval_config.use_bm25
+        
+        # If BM25 is requested and available, use hybrid search
+        if should_use_bm25 and self.bm25:
+            return self._hybrid_search(query, top_k)
+        else:
+            # Pure semantic search
+            return self._semantic_search(query, top_k)
+    
+    def _semantic_search(self, query: str, top_k: int) -> List[SearchResult]:
+        """Pure semantic search using FAISS."""
         try:
             # Encode query
             query_embedding = self.embedding_model.encode(
@@ -123,10 +150,77 @@ class FAISSRetriever:
             logger.error(f"Search failed: {e}")
             raise
     
+    def _hybrid_search(self, query: str, top_k: int) -> List[SearchResult]:
+        """
+        Hybrid search combining FAISS semantic search and BM25.
+        
+        Args:
+            query: Search query
+            top_k: Number of results
+            
+        Returns:
+            List of SearchResult with combined scores
+        """
+        try:
+            # Get more results from semantic search for reranking
+            semantic_top_k = min(top_k * 3, len(self.doc_ids))
+            
+            # Encode query for semantic search
+            query_embedding = self.embedding_model.encode([query], batch_size=1)
+            
+            # Get semantic results
+            semantic_scores, semantic_indices = self.index.search(query_embedding, semantic_top_k)
+            
+            # Get BM25 scores for all documents
+            query_tokens = query.lower().split()
+            bm25_scores = self.bm25.get_scores(query_tokens)
+            
+            # Normalize BM25 scores to 0-1 range
+            max_bm25 = max(bm25_scores) if max(bm25_scores) > 0 else 1
+            bm25_scores_norm = bm25_scores / max_bm25
+            
+            # Combine scores with weighted average
+            semantic_weight = 1.0 - self.retrieval_config.bm25_weight
+            bm25_weight = self.retrieval_config.bm25_weight
+            
+            combined_scores = {}
+            for idx, semantic_score in zip(semantic_indices[0], semantic_scores[0]):
+                doc_id = self.doc_ids[idx]
+                bm25_score = bm25_scores_norm[idx]
+                
+                # Weighted combination
+                combined_score = (semantic_weight * semantic_score + 
+                                bm25_weight * bm25_score)
+                combined_scores[doc_id] = combined_score
+            
+            # Sort by combined score
+            sorted_results = sorted(
+                combined_scores.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:top_k]
+            
+            # Convert to SearchResult objects
+            results = []
+            for rank, (doc_id, score) in enumerate(sorted_results, start=1):
+                if score >= self.retrieval_config.min_similarity:
+                    results.append(SearchResult(
+                        doc_id=doc_id,
+                        score=float(score),
+                        rank=rank
+                    ))
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            raise
+    
     def batch_search(
         self, 
         queries: List[str], 
-        top_k: Optional[int] = None
+        top_k: Optional[int] = None,
+        use_bm25: Optional[bool] = None
     ) -> List[List[SearchResult]]:
         """
         Search for multiple queries at once.
@@ -134,10 +228,18 @@ class FAISSRetriever:
         Args:
             queries: List of query strings
             top_k: Number of results per query
+            use_bm25: Override config to enable/disable BM25
             
         Returns:
             List of result lists, one for each query
         """
+        # For batch search with BM25, process queries individually
+        should_use_bm25 = use_bm25 if use_bm25 is not None else self.retrieval_config.use_bm25
+        
+        if should_use_bm25 and self.bm25:
+            return [self.search(query, top_k, use_bm25=True) for query in queries]
+        
+        # Pure semantic batch search
         if top_k is None:
             top_k = self.retrieval_config.top_k
         
@@ -174,121 +276,77 @@ class FAISSRetriever:
             raise
 
 
-class HybridRetriever:
-    """
-    Hybrid retrieval combining semantic (FAISS) and lexical (BM25) search.
-    
-    Note: This requires storing document texts for BM25.
-    For now, this is a placeholder showing the architecture.
-    """
-    
-    def __init__(
-        self,
-        faiss_retriever: FAISSRetriever,
-        document_texts: Optional[List[str]] = None
-    ):
-        self.faiss_retriever = faiss_retriever
-        self.config = faiss_retriever.retrieval_config
-        
-        # Initialize BM25 if texts are provided and hybrid mode is enabled
-        self.bm25 = None
-        if self.config.use_bm25 and document_texts:
-            logger.info("Initializing BM25 index...")
-            tokenized_docs = [doc.lower().split() for doc in document_texts]
-            self.bm25 = BM25Okapi(tokenized_docs)
-            logger.info("BM25 index ready")
-    
-    def search(self, query: str, top_k: Optional[int] = None) -> List[SearchResult]:
-        """
-        Hybrid search combining FAISS and BM25 scores.
-        
-        Args:
-            query: Search query
-            top_k: Number of results to return
-            
-        Returns:
-            List of SearchResult objects with combined scores
-        """
-        if not self.config.use_bm25 or self.bm25 is None:
-            # Fall back to pure semantic search
-            return self.faiss_retriever.search(query, top_k)
-        
-        if top_k is None:
-            top_k = self.config.top_k
-        
-        # Get semantic results
-        semantic_results = self.faiss_retriever.search(query, top_k * 2)
-        
-        # Get BM25 scores
-        query_tokens = query.lower().split()
-        bm25_scores = self.bm25.get_scores(query_tokens)
-        
-        # Combine scores (weighted average)
-        combined_results = {}
-        semantic_weight = 1.0 - self.config.bm25_weight
-        
-        for result in semantic_results:
-            idx = self.faiss_retriever.doc_ids.index(result.doc_id)
-            semantic_score = result.score
-            bm25_score = bm25_scores[idx]
-            
-            # Normalize and combine
-            combined_score = (
-                semantic_weight * semantic_score + 
-                self.config.bm25_weight * (bm25_score / (bm25_score + 1))
-            )
-            combined_results[result.doc_id] = combined_score
-        
-        # Sort by combined score
-        sorted_results = sorted(
-            combined_results.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )[:top_k]
-        
-        # Convert to SearchResult objects
-        return [
-            SearchResult(doc_id=doc_id, score=score, rank=rank)
-            for rank, (doc_id, score) in enumerate(sorted_results, start=1)
-        ]
-
-
 def demo_search():
     """Demo function showing how to use the retriever."""
     
     # Initialize configuration
     model_config = ModelConfig()
     index_config = IndexConfig()
-    retrieval_config = RetrievalConfig(top_k=5)
     
-    # Create retriever
-    logger.info("Initializing retriever...")
+    # Demo 1: Pure semantic search
+    print("\n" + "="*60)
+    print("DEMO 1: Pure Semantic Search (FAISS only)")
+    print("="*60)
+    
+    retrieval_config = RetrievalConfig(top_k=5, use_bm25=False)
     retriever = FAISSRetriever(
         model_config=model_config,
         index_config=index_config,
         retrieval_config=retrieval_config
     )
     
-    # Example searches
-    queries = [
-        "What are the best features of this product?",
-        "Any complaints about quality?",
-        "Customer service experience"
-    ]
+    query = "What are the best features of this product?"
+    logger.info(f"Query: {query}")
+    results = retriever.search(query)
     
-    for query in queries:
-        logger.info(f"\n{'='*60}")
+    for result in results:
+        logger.info(f"  Rank {result.rank}: Doc ID={result.doc_id}, Score={result.score:.4f}")
+    
+    # Demo 2: Hybrid search (if BM25 is available)
+    if retriever.doc_texts:
+        print("\n" + "="*60)
+        print("DEMO 2: Hybrid Search (FAISS + BM25)")
+        print("="*60)
+        
+        retrieval_config_hybrid = RetrievalConfig(
+            top_k=5, 
+            use_bm25=True,
+            bm25_weight=0.3
+        )
+        retriever_hybrid = FAISSRetriever(
+            model_config=model_config,
+            index_config=index_config,
+            retrieval_config=retrieval_config_hybrid
+        )
+        
+        query = "excellent quality and fast shipping"
         logger.info(f"Query: {query}")
-        logger.info(f"{'='*60}")
-        
-        results = retriever.search(query, top_k=3)
-        
-        if not results:
-            logger.info("No results found")
-            continue
+        results = retriever_hybrid.search(query)
         
         for result in results:
             logger.info(f"  Rank {result.rank}: Doc ID={result.doc_id}, Score={result.score:.4f}")
+        
+        # Demo 3: Toggle BM25 per query
+        print("\n" + "="*60)
+        print("DEMO 3: Toggle BM25 Per Query")
+        print("="*60)
+        
+        query = "customer service"
+        
+        # Search without BM25
+        logger.info(f"Query (semantic only): {query}")
+        results_semantic = retriever_hybrid.search(query, use_bm25=False)
+        for result in results_semantic[:3]:
+            logger.info(f"  Rank {result.rank}: Doc {result.doc_id}, Score={result.score:.4f}")
+        
+        # Search with BM25
+        logger.info(f"\nQuery (with BM25): {query}")
+        results_hybrid = retriever_hybrid.search(query, use_bm25=True)
+        for result in results_hybrid[:3]:
+            logger.info(f"  Rank {result.rank}: Doc {result.doc_id}, Score={result.score:.4f}")
+    else:
+        logger.warning("\nBM25 not available - index was built without document texts")
+        logger.warning("Rebuild the index to enable BM25 hybrid search")
 
 
 if __name__ == "__main__":
