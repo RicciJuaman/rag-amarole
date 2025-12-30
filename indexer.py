@@ -182,26 +182,41 @@ class FAISSIndexer:
         
         logger.info(f"Initialized FAISS IndexFlatIP with dimension {embedding_dim}")
     
-    def add_embeddings(self, embeddings: np.ndarray, doc_ids: List[int]) -> None:
+    def add_embeddings(self, embeddings: np.ndarray, doc_ids: List[int], texts: List[str] = None) -> None:
         """Add embeddings to the index."""
         if embeddings.shape[0] != len(doc_ids):
             raise ValueError("Number of embeddings must match number of doc IDs")
         
         self.index.add(embeddings)
         self.doc_ids.extend(doc_ids)
+        
+        # Store texts for BM25 if provided
+        if texts:
+            self.doc_texts.extend(texts)
     
     def save(self) -> None:
         """Save index and metadata to disk."""
         index_path = self.config.get_index_path(self.model_name)
         meta_path = self.config.get_metadata_path(self.model_name)
+        texts_path = self.config.get_texts_path(self.model_name)
         
         try:
             logger.info(f"Saving FAISS index to {index_path}")
             faiss.write_index(self.index, str(index_path))
             
             logger.info(f"Saving metadata to {meta_path}")
+            metadata = {
+                'doc_ids': self.doc_ids,
+                'doc_texts': self.doc_texts if self.doc_texts else None
+            }
             with open(meta_path, "wb") as f:
-                pickle.dump(self.doc_ids, f)
+                pickle.dump(metadata, f)
+            
+            # Also save texts separately for easier BM25 loading
+            if self.doc_texts:
+                logger.info(f"Saving document texts to {texts_path}")
+                with open(texts_path, "wb") as f:
+                    pickle.dump(self.doc_texts, f)
             
             logger.info("Save complete")
         except Exception as e:
@@ -214,6 +229,7 @@ class FAISSIndexer:
         checkpoint_data = {
             "offset": offset,
             "doc_ids": self.doc_ids,
+            "doc_texts": self.doc_texts,
             "total_vectors": self.index.ntotal,
         }
         
@@ -236,6 +252,7 @@ class FAISSIndexer:
                 checkpoint = pickle.load(f)
             
             self.doc_ids = checkpoint["doc_ids"]
+            self.doc_texts = checkpoint.get("doc_texts", [])
             logger.info(f"Loaded checkpoint: {checkpoint['total_vectors']} vectors at offset {checkpoint['offset']}")
             return checkpoint["offset"]
         except Exception as e:
@@ -306,7 +323,7 @@ def build_index(
                 )
                 
                 # Add to index
-                indexer.add_embeddings(embeddings, doc_ids)
+                indexer.add_embeddings(embeddings, doc_ids, texts)
                 
                 # Update stats
                 stats.total_documents += len(texts)
