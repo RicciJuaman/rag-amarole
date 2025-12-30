@@ -73,6 +73,11 @@ class IndexConfig:
         safe_name = model_name.replace("/", "_")
         return self.index_dir / f"{safe_name}_metadata.pkl"
     
+    def get_texts_path(self, model_name: str) -> Path:
+        """Get path for document texts (for BM25)."""
+        safe_name = model_name.replace("/", "_")
+        return self.index_dir / f"{safe_name}_texts.pkl"
+    
     def get_checkpoint_path(self, model_name: str) -> Path:
         """Get path for checkpoint file."""
         safe_name = model_name.replace("/", "_")
