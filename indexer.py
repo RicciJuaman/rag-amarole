@@ -10,10 +10,10 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
 import numpy as np
-import psycopg2 # pyright: ignore[reportMissingModuleSource]
-import faiss # pyright: ignore[reportMissingImports]
-import torch # pyright: ignore[reportMissingImports]
-from sentence_transformers import SentenceTransformer # pyright: ignore[reportMissingImports]
+import psycopg2
+import faiss
+import torch
+from sentence_transformers import SentenceTransformer
 
 from config import ModelConfig, DatabaseConfig, IndexConfig
 
@@ -178,6 +178,7 @@ class FAISSIndexer:
         self.model_name = model_name
         self.index = faiss.IndexFlatIP(embedding_dim)
         self.doc_ids = []
+        self.doc_texts = []  # Store texts for BM25
         
         logger.info(f"Initialized FAISS IndexFlatIP with dimension {embedding_dim}")
     
