@@ -49,7 +49,7 @@ class EmbeddingIndexer:
         Args:
             gold_set_table: Name of the gold set table (e.g., 'q1', 'q2')
             reviews_table: Name of the reviews table
-            query_name: The query name/column to filter by (e.g., 'Good Dog Food')
+            query_name: The query name/column to filter by (e.g., 'dog got sick')
             
         Returns:
             List of tuples containing (id, summary, text, label)
@@ -206,7 +206,7 @@ class EmbeddingIndexer:
         print(f"Metadata loaded from {metadata_path}")
         print(f"BM25 enabled: {self.use_bm25}")
     
-    def search(self, query: str, k: int = 10, use_bm25: Optional[bool] = None) -> List[Tuple[int, float, str]]:
+    def search(self, query: str, k: int = 15, use_bm25: Optional[bool] = None) -> List[Tuple[int, float, str]]:
         """
         Search the index for similar documents.
         
@@ -342,7 +342,7 @@ class EmbeddingIndexer:
         
         return stats
     
-    def evaluate_top_k(self, query: str, stats: dict, k: int = 10, use_bm25: Optional[bool] = None):
+    def evaluate_top_k(self, query: str, stats: dict, k: int = 15, use_bm25: Optional[bool] = None):
         """
         Evaluate and display top-k results.
         
@@ -402,22 +402,22 @@ if __name__ == "__main__":
     
     # Embed query 1 (q1 table)
     stats = indexer.embed_table(
-        gold_set_table='q1',
+        gold_set_table='q7',
         reviews_table='reviews',
-        query_name='Good Dog Food',
-        save_index_path='q1_index.faiss',
-        save_metadata_path='q1_metadata.pkl'
+        query_name='refund',
+        save_index_path='q7_index.faiss',
+        save_metadata_path='q7_metadata.pkl'
     )
     
-    query = "Good Dog Food"
+    query = "refund"
     
     # Show top 10 with semantic only
     print("\n" + "="*80)
     print("COMPARISON: Semantic vs Hybrid Search")
     print("="*80)
     
-    results_semantic = indexer.evaluate_top_k(query, stats, k=10, use_bm25=False)
-    results_hybrid = indexer.evaluate_top_k(query, stats, k=10, use_bm25=True)
+    results_semantic = indexer.evaluate_top_k(query, stats, k=15, use_bm25=False)
+    results_hybrid = indexer.evaluate_top_k(query, stats, k=15, use_bm25=True)
     
     # Summary comparison
     print("\n" + "="*80)
@@ -436,5 +436,5 @@ if __name__ == "__main__":
     
     # Example: Load and search later
     # indexer2 = EmbeddingIndexer(use_bm25=True)
-    # indexer2.load_index('q1_index.faiss', 'q1_metadata.pkl')
-    # results = indexer2.search("Good Dog Food", k=10)
+    # indexer2.load_index('q2_index.faiss', 'q2_metadata.pkl')
+    # results = indexer2.search("refund", k=10)
